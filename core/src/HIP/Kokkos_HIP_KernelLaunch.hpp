@@ -65,9 +65,31 @@ __global__ static void hip_parallel_launch_constant_memory() {
   driver();
 }
 
-template <typename DriverType, unsigned int maxTperB, unsigned int minBperSM>
-__global__ __launch_bounds__(
-    maxTperB, minBperSM) static void hip_parallel_launch_constant_memory() {
+template<unsigned int TpB, unsigned int minBpCU, unsigned int maxBpCU>
+struct
+HIPLaunchBounds
+{
+  static constexpr int threads_per_block = TpB;
+  static constexpr int wave_size = 64;
+  static constexpr int eu_per_cu = 4;
+  static constexpr int waves_per_block = 1+(TpB-1) / wave_size;
+  static constexpr int min_waves_per_cu = minBpCU * waves_per_block;
+  static constexpr int max_waves_per_cu = maxBpCU * waves_per_block;
+  static constexpr int min_waves_per_eu = minBpCU == 0 ? 0 : 1+(min_waves_per_cu-1) / eu_per_cu;
+  static constexpr int max_waves_per_eu = maxBpCU == 0 ? 0 : 1+(max_waves_per_cu-1) / eu_per_cu;
+};
+
+// FIXME: For testing only - needs to included 32 and 64 sized waves
+#define ROCM_LAUNCH_BOUNDS(maxTperB,minBperSM,maxBperSM)          \
+__attribute__((amdgpu_flat_work_group_size(1, maxTperB),          \
+               amdgpu_waves_per_eu(HIPLaunchBounds<maxTperB,minBperSM,maxBperSM>::min_waves_per_eu,   \
+                                   HIPLaunchBounds<maxTperB,minBperSM,maxBperSM>::max_waves_per_eu)))
+
+template <typename DriverType, unsigned int maxTperB, 
+          unsigned int minBperSM, unsigned int maxBperSM>
+__global__ 
+ROCM_LAUNCH_BOUNDS(maxTperB, minBperSM, maxBperSM) 
+static void hip_parallel_launch_constant_memory() {
   const DriverType &driver = *(reinterpret_cast<const DriverType *>(
       kokkos_impl_hip_constant_memory_buffer));
 
@@ -80,11 +102,11 @@ __global__ static void hip_parallel_launch_local_memory(
   driver();
 }
 
-template <class DriverType, unsigned int maxTperB, unsigned int minBperSM>
-__global__ __launch_bounds__(
-    maxTperB,
-    minBperSM) static void hip_parallel_launch_local_memory(const DriverType
-                                                                driver) {
+template <typename DriverType, unsigned int maxTperB, 
+          unsigned int minBperSM, unsigned int maxBperSM>
+__global__ 
+ROCM_LAUNCH_BOUNDS(maxTperB, minBperSM, maxBperSM) 
+static void hip_parallel_launch_local_memory(const DriverType driver) {
   driver();
 }
 
@@ -94,11 +116,11 @@ __global__ static void hip_parallel_launch_global_memory(
   driver->operator()();
 }
 
-template <typename DriverType, unsigned int maxTperB, unsigned int minBperSM>
-__global__ __launch_bounds__(
-    maxTperB,
-    minBperSM) static void hip_parallel_launch_global_memory(const DriverType
-                                                                 *driver) {
+template <typename DriverType, unsigned int maxTperB, 
+          unsigned int minBperSM, unsigned int maxBperSM>
+__global__ 
+ROCM_LAUNCH_BOUNDS(maxTperB, minBperSM, maxBperSM) 
+static void hip_parallel_launch_global_memory(const DriverType *driver) {
   driver->operator()();
 }
 
@@ -218,16 +240,18 @@ struct HIPParallelLaunchKernelFunc;
 
 // HIPLaunchMechanism::LocalMemory specializations
 template <typename DriverType, unsigned int MaxThreadsPerBlock,
-          unsigned int MinBlocksPerSM>
+          unsigned int MinBlocksPerSM, unsigned int MaxBlocksPerSM>
 struct HIPParallelLaunchKernelFunc<
-    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                     MaxBlocksPerSM>,
     HIPLaunchMechanism::LocalMemory> {
   using funcdata_t = HIPParallelLaunchKernelFuncData<
-      DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+      DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                       MaxBlocksPerSM>,
       HIPLaunchMechanism::LocalMemory>;
   static auto get_kernel_func() {
     return hip_parallel_launch_local_memory<DriverType, MaxThreadsPerBlock,
-                                            MinBlocksPerSM>;
+                                            MinBlocksPerSM, MaxBlocksPerSM>;
   }
 
   static constexpr auto default_launchbounds() { return false; }
@@ -268,16 +292,18 @@ struct HIPParallelLaunchKernelFunc<DriverType, Kokkos::LaunchBounds<0, 0>,
 
 // HIPLaunchMechanism::GlobalMemory specializations
 template <typename DriverType, unsigned int MaxThreadsPerBlock,
-          unsigned int MinBlocksPerSM>
+          unsigned int MinBlocksPerSM, unsigned int MaxBlocksPerSM>
 struct HIPParallelLaunchKernelFunc<
-    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                     MaxBlocksPerSM>,
     HIPLaunchMechanism::GlobalMemory> {
   using funcdata_t = HIPParallelLaunchKernelFuncData<
-      DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+      DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM, 
+                                       MaxBlocksPerSM>,
       HIPLaunchMechanism::GlobalMemory>;
   static auto get_kernel_func() {
     return hip_parallel_launch_global_memory<DriverType, MaxThreadsPerBlock,
-                                             MinBlocksPerSM>;
+                                             MinBlocksPerSM,MaxBlocksPerSM>;
   }
 
   static constexpr auto default_launchbounds() { return false; }
@@ -316,16 +342,17 @@ struct HIPParallelLaunchKernelFunc<DriverType, Kokkos::LaunchBounds<0, 0>,
 
 // HIPLaunchMechanism::ConstantMemory specializations
 template <typename DriverType, unsigned int MaxThreadsPerBlock,
-          unsigned int MinBlocksPerSM>
+          unsigned int MinBlocksPerSM, unsigned int MaxBlocksPerSM>
 struct HIPParallelLaunchKernelFunc<
-    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                     MaxBlocksPerSM>,
     HIPLaunchMechanism::ConstantMemory> {
   using funcdata_t = HIPParallelLaunchKernelFuncData<
       DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
       HIPLaunchMechanism::ConstantMemory>;
   static auto get_kernel_func() {
     return hip_parallel_launch_constant_memory<DriverType, MaxThreadsPerBlock,
-                                               MinBlocksPerSM>;
+                                               MinBlocksPerSM, MaxBlocksPerSM>;
   }
 
   static constexpr auto default_launchbounds() { return false; }
@@ -539,15 +566,19 @@ template <typename DriverType, typename LaunchBounds = Kokkos::LaunchBounds<>,
 struct HIPParallelLaunch;
 
 template <typename DriverType, unsigned int MaxThreadsPerBlock,
-          unsigned int MinBlocksPerSM, HIPLaunchMechanism LaunchMechanism>
+          unsigned int MinBlocksPerSM, unsigned int MaxBlocksPerSM, 
+          HIPLaunchMechanism LaunchMechanism>
 struct HIPParallelLaunch<
-    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+    DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                     MaxBlocksPerSM>,
     LaunchMechanism>
     : HIPParallelLaunchKernelInvoker<
-          DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+          DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                           MaxBlocksPerSM>,
           LaunchMechanism> {
   using base_t = HIPParallelLaunchKernelInvoker<
-      DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM>,
+      DriverType, Kokkos::LaunchBounds<MaxThreadsPerBlock, MinBlocksPerSM,
+                                       MaxBlocksPerSM>,
       LaunchMechanism>;
 
   HIPParallelLaunch(const DriverType &driver, const dim3 &grid,

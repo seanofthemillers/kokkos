@@ -113,12 +113,15 @@ inline constexpr bool operator==(WorkItemProperty::ImplWorkItemProperty<pv1>,
 template <unsigned int maxT = 0 /* Max threads per block */
           ,
           unsigned int minB = 0 /* Min blocks per SM */
+          ,
+          unsigned int maxB = 0 /* Max blocks per SM */
           >
 struct LaunchBounds {
   using launch_bounds = LaunchBounds;
-  using type          = LaunchBounds<maxT, minB>;
+  using type          = LaunchBounds<maxT, minB, maxB>;
   static constexpr unsigned int maxTperB{maxT};
   static constexpr unsigned int minBperSM{minB};
+  static constexpr unsigned int maxBperSM{maxB};
 };
 
 }  // namespace Kokkos

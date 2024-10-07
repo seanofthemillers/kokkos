@@ -55,8 +55,8 @@ struct LaunchBoundsTrait : TraitSpecificationBase<LaunchBoundsTrait> {
 //==============================================================================
 // <editor-fold desc="PolicyTraitMatcher specialization"> {{{1
 
-template <unsigned int maxT, unsigned int minB>
-struct PolicyTraitMatcher<LaunchBoundsTrait, LaunchBounds<maxT, minB>>
+template <unsigned int maxT, unsigned int minB, unsigned int maxB>
+struct PolicyTraitMatcher<LaunchBoundsTrait, LaunchBounds<maxT, minB, maxB>>
     : std::true_type {};
 
 // </editor-fold> end PolicyTraitMatcher specialization }}}1
