@@ -29,7 +29,7 @@ static_assert(false,
 namespace Kokkos {
 namespace Experimental {
 
-enum class UniqueTokenScope : int { Instance, Global };
+enum class UniqueTokenScope : int { Instance, Global, DuplicateScatterViewHack };
 
 /// \brief class to generate unique ids base on the required amount of
 /// concurrency

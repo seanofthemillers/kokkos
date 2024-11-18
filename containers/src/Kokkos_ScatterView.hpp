@@ -1192,11 +1192,16 @@ class ScatterView<DataType, Kokkos::LayoutRight, DeviceType, Op,
     return internal_view(rank, args...);
   }
 
- protected:
+ public:
+  // using unique_token_type = Kokkos::Experimental::UniqueToken<
+  //     execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
+  // Testing the duplicate view method for the scatter view
   using unique_token_type = Kokkos::Experimental::UniqueToken<
-      execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
+      execution_space, Kokkos::Experimental::UniqueTokenScope::DuplicateScatterViewHack>;
+
 
   unique_token_type unique_token;
+protected:
   internal_view_type internal_view;
 };
 
@@ -1433,11 +1438,17 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
     return internal_view(args..., thread_id);
   }
 
- protected:
+ public:
+  // using unique_token_type = Kokkos::Experimental::UniqueToken<
+  //     execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
+
+  // Testing the duplicate view method for the scatter view
   using unique_token_type = Kokkos::Experimental::UniqueToken<
-      execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
+      execution_space, Kokkos::Experimental::UniqueTokenScope::DuplicateScatterViewHack>;
 
   unique_token_type unique_token;
+protected:
+
   internal_view_type internal_view;
 };
 

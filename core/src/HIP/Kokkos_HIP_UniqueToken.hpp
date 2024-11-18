@@ -120,6 +120,55 @@ class UniqueToken<HIP, UniqueTokenScope::Global> {
   }
 };
 
+
+
+// This is a temporary implementation to 
+template <>
+class UniqueToken<HIP, UniqueTokenScope::DuplicateScatterViewHack> {
+ public:
+  using execution_space = HIP;
+  using size_type       = int32_t;
+
+  explicit UniqueToken(execution_space const& = HIP()){}
+
+ public:
+  KOKKOS_DEFAULTED_FUNCTION
+  UniqueToken(const UniqueToken&) = default;
+
+  KOKKOS_DEFAULTED_FUNCTION
+  UniqueToken(UniqueToken&&) = default;
+
+  KOKKOS_DEFAULTED_FUNCTION
+  UniqueToken& operator=(const UniqueToken&) = default;
+
+  KOKKOS_DEFAULTED_FUNCTION
+  UniqueToken& operator=(UniqueToken&&) = default;
+
+  /// \brief upper bound for acquired values, i.e. 0 <= value < size()
+  KOKKOS_INLINE_FUNCTION
+  size_type size() const noexcept { return 64; }
+
+ private:
+  __device__ size_type impl_acquire() const {
+    const int idx = blockIdx.x * (blockDim.x * blockDim.y) +
+                    threadIdx.y * blockDim.x + threadIdx.x;
+    return idx & 63;
+  }
+
+ public:
+  /// \brief acquire value such that 0 <= value < size()
+  KOKKOS_INLINE_FUNCTION
+  size_type acquire() const {
+    KOKKOS_IF_ON_DEVICE(return impl_acquire();)
+    KOKKOS_IF_ON_HOST(return 0;)
+  }
+
+  /// \brief release an acquired value
+  KOKKOS_INLINE_FUNCTION
+  void release(size_type idx) const noexcept {}
+};
+
+
 template <>
 class UniqueToken<HIP, UniqueTokenScope::Instance>
     : public UniqueToken<HIP, UniqueTokenScope::Global> {
