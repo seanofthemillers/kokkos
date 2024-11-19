@@ -625,6 +625,71 @@ struct ReduceDuplicates
   }
 };
 
+
+
+
+
+
+
+
+template <typename ExecSpace, typename ValueType, typename Op>
+struct ReduceDuplicatesLeft;
+
+template <typename ExecSpace, typename ValueType, typename Op>
+struct ReduceDuplicatesLeftBase {
+  using Derived = ReduceDuplicatesLeft<ExecSpace, ValueType, Op>;
+  ValueType const* src;
+  ValueType* dst;
+  size_t nvalues;
+  size_t nreduce;
+  size_t base_stride;
+  size_t start;
+  ReduceDuplicatesLeftBase(ExecSpace const& exec_space, 
+                           ValueType const* src_in,
+                           ValueType* dest_in, 
+                           size_t nvalues_in,
+                           size_t nreduce_in,
+                           std::string const& name)
+      : src(src_in), dst(dest_in), nvalues(nvalues_in), nreduce(nreduce_in) {
+    base_stride = (src_in == dest_in) ? nreduce : 1;
+    start = (src_in == dest_in) ? 1 : 0;
+    parallel_for(
+        std::string("Kokkos::ScatterView::ReduceDuplicatesLeft [") + name + "]",
+        RangePolicy<ExecSpace, size_t>(exec_space, 0, nvalues),
+        static_cast<Derived const&>(*this));
+  }
+};
+
+/* ReduceDuplicatesLeft -- Perform reduction on destination array using strided
+ * source Use ScatterValue<> specific to operation to wrap destination array so
+ * that the reduction operation can be accessed via the update(rhs) function */
+template <typename ExecSpace, typename ValueType, typename Op>
+struct ReduceDuplicatesLeft
+    : public ReduceDuplicatesLeftBase<ExecSpace, ValueType, Op> {
+  using Base = ReduceDuplicatesLeftBase<ExecSpace, ValueType, Op>;
+  ReduceDuplicatesLeft(ExecSpace const& exec_space, 
+                       ValueType const* src_in,
+                       ValueType* dst_in, 
+                       size_t nvalues_in, 
+                       size_t nreduce_in,
+                       std::string const& name)
+      : Base(exec_space, src_in, dst_in, nvalues_in, nreduce_in, name) {}
+  KOKKOS_FORCEINLINE_FUNCTION void operator()(size_t i) const {
+    ScatterValue<ValueType, Op, ExecSpace, Kokkos::Experimental::ScatterNonAtomic>
+      sv(Base::dst[i*Base::base_stride]);
+    for (size_t j = Base::start; j < Base::nreduce; ++j) {
+      sv.update(Base::src[i*Base::nreduce + j]);
+    }
+  }
+};
+
+
+
+
+
+
+
+
 template <typename ExecSpace, typename ValueType, typename Op>
 struct ResetDuplicates;
 
@@ -1192,16 +1257,11 @@ class ScatterView<DataType, Kokkos::LayoutRight, DeviceType, Op,
     return internal_view(rank, args...);
   }
 
- public:
-  // using unique_token_type = Kokkos::Experimental::UniqueToken<
-  //     execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
-  // Testing the duplicate view method for the scatter view
-  using unique_token_type = Kokkos::Experimental::UniqueToken<
-      execution_space, Kokkos::Experimental::UniqueTokenScope::DuplicateScatterViewHack>;
-
-
-  unique_token_type unique_token;
 protected:
+  using unique_token_type = Kokkos::Experimental::UniqueToken<
+      execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
+  
+  unique_token_type unique_token;
   internal_view_type internal_view;
 };
 
@@ -1241,7 +1301,8 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
   ScatterView(execution_space const& exec_space,
               View<RT, RP...> const& original_view)
       : unique_token() {
-    size_t arg_N[8] = {original_view.rank > 0 ? original_view.extent(0)
+    size_t arg_N[8] = {size_t(unique_token.size()),
+                       original_view.rank > 0 ? original_view.extent(0)
                                               : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
                        original_view.rank > 1 ? original_view.extent(1)
                                               : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
@@ -1254,15 +1315,13 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
                        original_view.rank > 5 ? original_view.extent(5)
                                               : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
                        original_view.rank > 6 ? original_view.extent(6)
-                                              : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
-                       KOKKOS_IMPL_CTOR_DEFAULT_ARG};
-    arg_N[internal_view_type::rank - 1] = unique_token.size();
-    internal_view                       = internal_view_type(
-        view_alloc(WithoutInitializing,
-                                         std::string("duplicated_") + original_view.label(),
-                                         exec_space),
-        arg_N[0], arg_N[1], arg_N[2], arg_N[3], arg_N[4], arg_N[5], arg_N[6],
-        arg_N[7]);
+                                              : KOKKOS_IMPL_CTOR_DEFAULT_ARG};
+    internal_view = internal_view_type(
+      view_alloc(WithoutInitializing,
+                 std::string("duplicated_") + original_view.label(),
+                 exec_space),
+      arg_N[0], arg_N[1], arg_N[2], arg_N[3], arg_N[4], arg_N[5], arg_N[6],
+      arg_N[7]);
     reset(exec_space);
   }
 
@@ -1281,7 +1340,8 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
     check_scatter_view_allocation_properties_argument(arg_prop);
 
     original_view_type original_view;
-    size_t arg_N[8] = {original_view.rank > 0 ? original_view.static_extent(0)
+    size_t arg_N[8] = {size_t(unique_token.size()),
+                       original_view.rank > 0 ? original_view.static_extent(0)
                                               : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
                        original_view.rank > 1 ? original_view.static_extent(1)
                                               : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
@@ -1294,10 +1354,8 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
                        original_view.rank > 5 ? original_view.static_extent(5)
                                               : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
                        original_view.rank > 6 ? original_view.static_extent(6)
-                                              : KOKKOS_IMPL_CTOR_DEFAULT_ARG,
-                       KOKKOS_IMPL_CTOR_DEFAULT_ARG};
-    Kokkos::Impl::Experimental::args_to_array(arg_N, 0, dims...);
-    arg_N[internal_view_type::rank - 1] = unique_token.size();
+                                              : KOKKOS_IMPL_CTOR_DEFAULT_ARG};
+    Kokkos::Impl::Experimental::args_to_array(arg_N, 1, dims...);
 
     auto const& name =
         Kokkos::Impl::get_property<Kokkos::Impl::LabelTag>(arg_prop);
@@ -1366,14 +1424,29 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
         Kokkos::SpaceAccessibility<
             execution_space, typename dest_type::memory_space>::accessible,
         "ScatterView deep_copy destination memory space not accessible");
-    auto extent   = internal_view.extent(internal_view_type::rank - 1);
+    auto extent   = internal_view.extent(0);
     bool is_equal = (dest.data() == internal_view.data());
     size_t start  = is_equal ? 1 : 0;
-    Kokkos::Impl::Experimental::ReduceDuplicates<execution_space,
-                                                 original_value_type, Op>(
-        exec_space, internal_view.data(), dest.data(),
-        internal_view.stride(internal_view_type::rank - 1), start, extent,
-        internal_view.label());
+
+    // Kokkos::Impl::Experimental::ReduceDuplicates<execution_space,
+    //                                              original_value_type, Op>(
+    //     exec_space, internal_view.data(), dest.data(),
+    //     internal_view.stride(0), start, extent,
+    //     internal_view.label());
+
+  // ReduceDuplicatesLeft(ExecSpace const& exec_space, 
+  //                       ValueType const* src_in,
+  //                       ValueType* dst_in, 
+  //                       size_t nvalues_in, 
+  //                       size_t nreduce_in,
+  //                       std::string const& name)
+
+    Kokkos::Impl::Experimental::ReduceDuplicatesLeft<execution_space,
+                                                     original_value_type,Op>(
+            exec_space, internal_view.data(), dest.data(),
+            internal_view.size() / internal_view.extent(0), 
+            internal_view.extent(0),
+            internal_view.label());
   }
 
   void reset(execution_space const& exec_space = execution_space()) {
@@ -1408,9 +1481,7 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
               const size_t n4 = KOKKOS_IMPL_CTOR_DEFAULT_ARG,
               const size_t n5 = KOKKOS_IMPL_CTOR_DEFAULT_ARG,
               const size_t n6 = KOKKOS_IMPL_CTOR_DEFAULT_ARG) {
-    size_t arg_N[8] = {n0, n1, n2, n3, n4, n5, n6, 0};
-    const int i     = internal_view.rank - 1;
-    arg_N[i]        = unique_token.size();
+    size_t arg_N[8] = {unique_token.size(),n0, n1, n2, n3, n4, n5, n6};
 
     ::Kokkos::resize(internal_view, arg_N[0], arg_N[1], arg_N[2], arg_N[3],
                      arg_N[4], arg_N[5], arg_N[6], arg_N[7]);
@@ -1423,9 +1494,7 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
                const size_t n4 = KOKKOS_IMPL_CTOR_DEFAULT_ARG,
                const size_t n5 = KOKKOS_IMPL_CTOR_DEFAULT_ARG,
                const size_t n6 = KOKKOS_IMPL_CTOR_DEFAULT_ARG) {
-    size_t arg_N[8] = {n0, n1, n2, n3, n4, n5, n6, 0};
-    const int i     = internal_view.rank - 1;
-    arg_N[i]        = unique_token.size();
+    size_t arg_N[8] = {unique_token.size(), n0, n1, n2, n3, n4, n5, n6};
 
     ::Kokkos::realloc(internal_view, arg_N[0], arg_N[1], arg_N[2], arg_N[3],
                       arg_N[4], arg_N[5], arg_N[6], arg_N[7]);
@@ -1435,20 +1504,15 @@ class ScatterView<DataType, Kokkos::LayoutLeft, DeviceType, Op,
   template <typename... Args>
   KOKKOS_FORCEINLINE_FUNCTION original_reference_type at(int thread_id,
                                                          Args... args) const {
-    return internal_view(args..., thread_id);
+    return internal_view(thread_id,args...);
   }
 
- public:
-  // using unique_token_type = Kokkos::Experimental::UniqueToken<
-  //     execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
-
-  // Testing the duplicate view method for the scatter view
+protected:
   using unique_token_type = Kokkos::Experimental::UniqueToken<
-      execution_space, Kokkos::Experimental::UniqueTokenScope::DuplicateScatterViewHack>;
+      execution_space, Kokkos::Experimental::UniqueTokenScope::Global>;
+
 
   unique_token_type unique_token;
-protected:
-
   internal_view_type internal_view;
 };
 
